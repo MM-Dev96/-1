@@ -1,0 +1,6 @@
+{
+  "name": "منشئ وموجه الأوامر البرمجية الاحترافية",
+  "description": "أداة هندسية متطورة لتوليد موجهات الأوامر (Prompts) البرمجية عالية الجودة ومواصفات الأنظمة المتكاملة وفق أحدث معايير هندسة البرمجيات.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
