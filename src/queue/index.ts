@@ -7,14 +7,39 @@ import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 
 dotenv.config();
 
-const connectionString = `postgres://${process.env.SQL_USER}:${process.env.SQL_PASSWORD}@${process.env.SQL_HOST}/${process.env.SQL_DB_NAME}`;
-
-export const boss = new PgBoss(connectionString);
+export const boss = new PgBoss({
+  host: process.env.SQL_HOST,
+  user: process.env.SQL_USER,
+  password: process.env.SQL_PASSWORD,
+  database: process.env.SQL_DB_NAME,
+});
 
 boss.on('error', error => console.error('pg-boss error:', error));
 
-export async function startQueue() {
+import { registerWorkers } from './workers.ts';
+
+export async function startQueue(io?: any) {
   await boss.start();
+  
+  const queues = [
+    'workflow-execution',
+    'execute-stage-job',
+    'generate-prompt-job',
+    'evaluate-prompt-job',
+    'evaluate-self-job',
+    'workflow-orchestrator-job'
+  ];
+  for (const q of queues) {
+    try {
+      await boss.createQueue(q);
+    } catch(e) {
+      // Ignore if exists
+    }
+  }
+
+  if (io) {
+    registerWorkers(io);
+  }
 
   await boss.work('workflow-execution', async (jobs) => {
     for (const job of jobs) {

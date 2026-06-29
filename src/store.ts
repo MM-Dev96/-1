@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 
 export interface Stage {
   title: string;
@@ -29,10 +30,25 @@ const DEFAULT_STAGES: Stage[] = [
   { title: 'AI Orchestrator', desc: 'تجميع البرومبت', artifact: 'Pipeline.yml' }
 ];
 
-export type MainMode = 'orchestrator' | 'app_evaluator' | 'workflow_editor';
+export type MainMode = 'orchestrator' | 'app_evaluator' | 'workflow_editor' | 'repository' | 'settings';
 export type Tab = 'edit' | 'markdown' | 'app' | 'eval';
 
+export interface Project {
+  id: string;
+  name: string;
+  idea: string;
+  status: 'مكتمل' | 'غير مكتمل';
+  currentStage: number;
+  stageArtifacts: Record<number, string>;
+  activityLogs: any[];
+  finalPrompt: string;
+  mockupHtml: string;
+  createdAt: number;
+}
+
 interface AppState {
+  currentProjectId: string | null;
+  setCurrentProjectId: (id: string | null) => void;
   idea: string;
   setIdea: (idea: string) => void;
   isProcessing: boolean;
@@ -84,8 +100,8 @@ interface AppState {
   updateStage: (index: number, field: keyof Stage, value: string) => void;
   removeStage: (index: number) => void;
 
-  activityLogs: string[];
-  setActivityLogs: (logsOrFn: string[] | ((prev: string[]) => string[])) => void;
+  activityLogs: any[];
+  setActivityLogs: (logsOrFn: any[] | ((prev: any[]) => any[])) => void;
   
   stageArtifacts: Record<number, string>;
   setStageArtifacts: (artifactsOrFn: Record<number, string> | ((prev: Record<number, string>) => Record<number, string>)) => void;
@@ -95,9 +111,27 @@ interface AppState {
   
   metrics: { security: number; performance: number; accessibility: number; completeness: number };
   setMetrics: (metrics: { security: number; performance: number; accessibility: number; completeness: number }) => void;
+
+  projects: Project[];
+  addProject: (project: Project) => void;
+  removeProject: (id: string) => void;
+  updateProject: (id: string, updates: Partial<Project>) => void;
+
+  notifications: Array<{ id: string; message: string; read: boolean; timestamp: number }>;
+  addNotification: (message: string) => void;
+  markNotificationRead: (id: string) => void;
+  clearNotifications: () => void;
+  customApiKeys: string[];
+  setCustomApiKeys: (keys: string[]) => void;
 }
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>()(
+  persist(
+    (set) => ({
+  customApiKeys: [],
+  setCustomApiKeys: (customApiKeys) => set({ customApiKeys }),
+  currentProjectId: null,
+  setCurrentProjectId: (id) => set({ currentProjectId: id }),
   idea: '',
   setIdea: (idea) => set({ idea }),
   isProcessing: false,
@@ -170,5 +204,26 @@ export const useAppStore = create<AppState>((set) => ({
   setSelectedArtifact: (selectedArtifact) => set({ selectedArtifact }),
 
   metrics: { security: 0, performance: 0, accessibility: 0, completeness: 0 },
-  setMetrics: (metrics) => set({ metrics })
-}));
+  setMetrics: (metrics) => set({ metrics }),
+
+  projects: [],
+  addProject: (project) => set((state) => ({ projects: [project, ...state.projects] })),
+  removeProject: (id) => set((state) => ({ projects: state.projects.filter(p => p.id !== id) })),
+  updateProject: (id, updates) => set((state) => ({
+    projects: state.projects.map(p => p.id === id ? { ...p, ...updates } : p)
+  })),
+
+  notifications: [],
+  addNotification: (message) => set((state) => ({
+    notifications: [{ id: Date.now().toString(), message, read: false, timestamp: Date.now() }, ...state.notifications]
+  })),
+  markNotificationRead: (id) => set((state) => ({
+    notifications: state.notifications.map(n => n.id === id ? { ...n, read: true } : n)
+  })),
+  clearNotifications: () => set({ notifications: [] })
+}),
+{
+  name: 'app-store',
+  partialize: (state) => ({ projects: state.projects, currentProjectId: state.currentProjectId, notifications: state.notifications, customApiKeys: state.customApiKeys })
+}
+));

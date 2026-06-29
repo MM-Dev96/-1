@@ -40,3 +40,15 @@ export const artifacts = pgTable('artifacts', {
   content: text('content').notNull(),
   createdAt: timestamp('created_at').defaultNow(),
 });
+
+export const proposedChanges = pgTable('proposed_changes', {
+  id: serial('id').primaryKey(),
+  projectId: integer('project_id').references(() => projects.id).notNull(),
+  filePath: text('file_path').notNull(),
+  newContent: text('new_content'),
+  diffPatch: text('diff_patch'),
+  status: text('status').notNull().default('pending'), // pending, approved, rejected
+  agentId: text('agent_id'),
+  stageId: text('stage_id'),
+  createdAt: timestamp('created_at').defaultNow(),
+});
