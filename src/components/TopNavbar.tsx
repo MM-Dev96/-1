@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Menu, Search, Bell, Plus, Check } from 'lucide-react';
 import { useAppStore, MainMode } from '../store';
+import { motion, AnimatePresence } from 'motion/react';
 
 interface TopNavbarProps {
   setSidebarOpen: (open: boolean) => void;
@@ -65,37 +66,45 @@ export default function TopNavbar({ setSidebarOpen }: TopNavbarProps) {
             )}
           </button>
           
-          {showNotifications && (
-            <div className="absolute left-0 mt-2 w-80 bg-[#121212] border border-white/10 rounded-xl shadow-2xl py-2 z-50">
-              <div className="flex items-center justify-between px-4 pb-2 border-b border-white/5 mb-2">
-                <span className="font-medium text-sm text-white">الإشعارات</span>
-                {notifications.length > 0 && (
-                  <button onClick={() => clearNotifications()} className="text-xs text-zinc-500 hover:text-zinc-300">مسح الكل</button>
-                )}
-              </div>
-              <div className="max-h-64 overflow-y-auto custom-scrollbar">
-                {notifications.length === 0 ? (
-                  <div className="px-4 py-6 text-center text-zinc-500 text-sm">لا توجد إشعارات حالياً</div>
-                ) : (
-                  notifications.map(n => (
-                    <div 
-                      key={n.id} 
-                      onClick={() => markNotificationRead(n.id)}
-                      className={`px-4 py-3 cursor-pointer hover:bg-white/5 transition-colors border-b border-white/5 last:border-0 ${!n.read ? 'bg-indigo-500/5' : ''}`}
-                    >
-                      <div className="flex gap-3">
-                        <div className={`mt-1 w-2 h-2 rounded-full flex-shrink-0 ${!n.read ? 'bg-indigo-500' : 'bg-transparent'}`} />
-                        <div>
-                          <p className={`text-sm ${!n.read ? 'text-zinc-200' : 'text-zinc-400'}`}>{n.message}</p>
-                          <span className="text-[10px] text-zinc-600 mt-1 block">{new Date(n.timestamp).toLocaleTimeString('ar-SA')}</span>
+          <AnimatePresence>
+            {showNotifications && (
+              <motion.div 
+                initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                transition={{ duration: 0.2 }}
+                className="absolute left-0 mt-2 w-80 bg-[#121212] border border-white/10 rounded-xl shadow-2xl py-2 z-50"
+              >
+                <div className="flex items-center justify-between px-4 pb-2 border-b border-white/5 mb-2">
+                  <span className="font-medium text-sm text-white">الإشعارات</span>
+                  {notifications.length > 0 && (
+                    <button onClick={() => clearNotifications()} className="text-xs text-zinc-500 hover:text-zinc-300">مسح الكل</button>
+                  )}
+                </div>
+                <div className="max-h-64 overflow-y-auto custom-scrollbar">
+                  {notifications.length === 0 ? (
+                    <div className="px-4 py-6 text-center text-zinc-500 text-sm">لا توجد إشعارات حالياً</div>
+                  ) : (
+                    notifications.map(n => (
+                      <div 
+                        key={n.id} 
+                        onClick={() => markNotificationRead(n.id)}
+                        className={`px-4 py-3 cursor-pointer hover:bg-white/5 transition-colors border-b border-white/5 last:border-0 ${!n.read ? 'bg-indigo-500/5' : ''}`}
+                      >
+                        <div className="flex gap-3">
+                          <div className={`mt-1 w-2 h-2 rounded-full flex-shrink-0 ${!n.read ? 'bg-indigo-500' : 'bg-transparent'}`} />
+                          <div>
+                            <p className={`text-sm ${!n.read ? 'text-zinc-200' : 'text-zinc-400'}`}>{n.message}</p>
+                            <span className="text-[10px] text-zinc-600 mt-1 block">{new Date(n.timestamp).toLocaleTimeString('ar-SA')}</span>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
+                    ))
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
         
         <button 
@@ -106,12 +115,12 @@ export default function TopNavbar({ setSidebarOpen }: TopNavbarProps) {
             setActivityLogs([]);
             setFinalPrompt("");
             setMockupHtml("");
-            setCurrentStage(0);
+            setCurrentStage(null);
             setGlobalMainMode('orchestrator');
           }}
-          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1.5 rounded-md text-sm font-medium transition-colors shadow-sm"
+          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-3 sm:px-4 py-1.5 rounded-md text-sm font-medium transition-colors shadow-sm"
         >
-          <Plus size={16} /> مشروع جديد
+          <Plus size={16} /> <span className="hidden sm:inline">مشروع جديد</span>
         </button>
       </div>
     </header>

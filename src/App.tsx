@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import {
   Check,
   Copy,
@@ -7,6 +8,7 @@ import {
   ShieldCheck,
   Zap,
   Eye,
+   
   Terminal,
   ArrowLeft,
   Shield,
@@ -29,6 +31,15 @@ import {
   X,
   Archive,
   Save,
+  Pause,
+  AlertCircle,
+  AlertTriangle,
+  Monitor,
+  Smartphone,
+  Download,
+  ExternalLink,
+  Lock,
+  RefreshCcw
 } from "lucide-react";
 import Markdown from "react-markdown";
 import { useAppStore } from "./store";
@@ -36,8 +47,10 @@ import WorkflowEditor from "./components/WorkflowEditor";
 import Repository from "./components/Repository";
 import Sidebar from "./components/Sidebar";
 import TopNavbar from "./components/TopNavbar";
+import LivePreview from "./components/LivePreview";
+import { CountdownTimer } from "./components/CountdownTimer";
 
-function MetricBox({
+const MetricBox = React.memo(function MetricBox({
   label,
   value,
   icon: Icon,
@@ -69,7 +82,10 @@ function MetricBox({
   }
 
   return (
-    <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col justify-between transition-colors hover:border-white/20 relative overflow-hidden group shadow-sm">
+    <motion.div 
+      whileHover={{ scale: 1.02 }}
+      className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col justify-between transition-colors hover:border-white/20 relative overflow-hidden group shadow-sm"
+    >
       <div className="flex justify-between items-center mb-3">
         <div className="flex items-center gap-2">
           <Icon size={14} className={textColor} />
@@ -97,11 +113,11 @@ function MetricBox({
           }}
         ></div>
       </div>
-    </div>
+    </motion.div>
   );
-}
+});
 
-function FileProgressIndicator() {
+const FileProgressIndicator = React.memo(function FileProgressIndicator() {
   return (
     <span
       className="text-teal-400 font-mono text-xs flex gap-1.5 items-center bg-teal-900/20 px-2 py-1 rounded-md"
@@ -110,7 +126,7 @@ function FileProgressIndicator() {
       <RefreshCw size={12} className="animate-spin" /> Compiling...
     </span>
   );
-}
+});
 
 const ALL_SUGGESTIONS = [
   {
@@ -203,12 +219,14 @@ export default function App() {
     setIsAppEvaluating,
     appEvalError,
     setAppEvalError,
+    appEvalRetryMessage,
+    setAppEvalRetryMessage,
     mainMode,
     setMainMode,
-    workflowStages,
-    addStage,
-    updateStage,
-    removeStage,
+    nodes, edges,
+    addNode,
+    updateNode,
+    removeNode,
     activityLogs,
     setActivityLogs,
     stageArtifacts,
@@ -218,16 +236,41 @@ export default function App() {
     metrics,
     setMetrics,
     addNotification,
+    notifications,
+    markNotificationRead,
+    isConnected,
     customApiKeys,
     setCustomApiKeys
   } = useAppStore();
+
+  // Handle toast timeout
+  useEffect(() => {
+    const unreadNotifications = notifications.filter((n) => !n.read);
+    if (unreadNotifications.length > 0) {
+      const timeouts = unreadNotifications.map((n) =>
+        setTimeout(() => {
+          markNotificationRead(n.id);
+        }, 5000)
+      );
+      return () => {
+        timeouts.forEach((t) => clearTimeout(t));
+      };
+    }
+  }, [notifications, markNotificationRead]);
 
   const fetchWithKeys = async (url: string, options: RequestInit = {}) => {
     const headers = {
       ...(options.headers || {}),
       ...(customApiKeys.length > 0 ? { "X-Gemini-Keys": customApiKeys.join(",") } : {})
     };
-    return fetch(url, { ...options, headers });
+    try {
+      return await fetch(url, { ...options, headers });
+    } catch (err: unknown) {
+      if (!useAppStore.getState().isConnected || (err as Error).message === 'Failed to fetch') {
+        useAppStore.getState().addNotification('الخادم غير متاح حالياً. يرجى المحاولة لاحقاً أو التحقق من اتصالك.');
+      }
+      throw err;
+    }
   };
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -242,7 +285,7 @@ export default function App() {
 
   // Timer logic for stages
   const [stageTimer, setStageTimer] = useState<number | null>(null);
-  const timerIntervalRef = useRef<any>(null);
+  const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const startTimer = () => {
     setStageTimer(0);
@@ -278,7 +321,7 @@ export default function App() {
       .then(res => res.json())
       .then(data => {
          if (data && data.nodes && Array.isArray(data.nodes)) {
-            useAppStore.getState().setWorkflowStages(data.nodes);
+            useAppStore.getState().setNodes(data.nodes);
          }
       })
       .catch(err => console.error("Failed to load workflow stages:", err));
@@ -288,21 +331,76 @@ export default function App() {
   const outputRef = useRef<HTMLDivElement>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const activeJobs = useRef<{
-    [key: string]: { type: string; index?: number };
+    [key: string]: { type: string; nodeId?: string };
   }>({});
 
+  // Global timeout references for idle timeouts
+  const jobTimeouts = useRef<Record<string, NodeJS.Timeout>>({});
+  const currentJobIdRef = useRef<string | null>(null);
+  const hasConnectedOnce = useRef(false);
+
   useEffect(() => {
-    import("socket.io-client").then(({ io }) => {
-      const socket = io();
+    let activeSocket: any = null;
+    import("./services/socket.ts").then(({ getSocket }) => {
+      const socket = getSocket();
+      if (!socket.connected) socket.connect();
+      activeSocket = socket;
+
+      socket.on("test_event", (data) => {
+        useAppStore.getState().addNotification("Test Event Received!");
+      });
+      socket.on("connect", () => {
+        useAppStore.getState().setIsConnected(true);
+        if (!hasConnectedOnce.current) {
+          useAppStore.getState().addNotification("متصل بالخادم");
+          hasConnectedOnce.current = true;
+        }
+      });
+
+      socket.on("disconnect", (reason) => {
+        useAppStore.getState().setIsConnected(false);
+        useAppStore.getState().addNotification("انقطع الاتصال بالخادم: " + reason);
+      });
+
+      socket.on("connect_error", (error) => {
+        useAppStore.getState().setIsConnected(false);
+        useAppStore.getState().addNotification("فشل الاتصال: " + error.message);
+      });
+
+      const resetJobIdleTimeout = (jobId: string) => {
+        if (jobTimeouts.current[jobId]) clearTimeout(jobTimeouts.current[jobId]);
+        jobTimeouts.current[jobId] = setTimeout(() => {
+          if (activeJobs.current[jobId]) {
+            const jobInfo = activeJobs.current[jobId];
+            if (jobInfo.type === "app_eval") {
+              useAppStore.getState().setAppEvalError("انتهى وقت الانتظار (Timeout). الخادم لا يستجيب ولم يرسل بيانات لفترة طويلة. يرجى المحاولة مرة أخرى أو تقليل نطاق التركيز.");
+              useAppStore.getState().setIsAppEvaluating(false);
+            } else if (jobInfo.type === "eval") {
+              useAppStore.getState().setEvalError("انتهى وقت الانتظار (Timeout). الخادم لا يستجيب.");
+              useAppStore.getState().setIsEvaluating(false);
+            }
+            delete activeJobs.current[jobId];
+            delete jobTimeouts.current[jobId];
+          }
+        }, 1800000); // 4 minutes idle timeout
+      };
+
+      socket.on("job_started", ({ jobId }) => {
+         const jobInfo = activeJobs.current[jobId];
+         if (!jobInfo) return;
+         resetJobIdleTimeout(jobId);
+      });
 
       socket.on("job_chunk", ({ jobId, text }) => {
         const jobInfo = activeJobs.current[jobId];
         if (!jobInfo) return;
+        
+        resetJobIdleTimeout(jobId);
 
-        if (jobInfo.type === "stage" && jobInfo.index !== undefined) {
+        if (jobInfo.type === "stage" && jobInfo.nodeId !== undefined) {
           useAppStore.getState().setStageArtifacts((prev) => ({
             ...prev,
-            [jobInfo.index!]: (prev[jobInfo.index!] || "") + text,
+            [jobInfo.nodeId!]: (prev[jobInfo.nodeId!] || "") + text,
           }));
         } else if (jobInfo.type === "prompt") {
           useAppStore.getState().setFinalPrompt((prev) => prev + text);
@@ -313,11 +411,38 @@ export default function App() {
         }
       });
 
+      socket.on("job_retry", ({ jobId, message }) => {
+        const jobInfo = activeJobs.current[jobId];
+        if (!jobInfo) return;
+        
+        resetJobIdleTimeout(jobId);
+
+        if (jobInfo.type === "stage" && jobInfo.nodeId !== undefined) {
+          useAppStore.getState().updateNode(jobInfo.nodeId, 'startTime', Date.now()); // Reset timer
+          useAppStore.getState().setActivityLogs((prev) => [
+            ...prev,
+            `[${new Date().toLocaleTimeString("ar-SA", { hour12: false })}] ⏳ ${message}`,
+          ]);
+        } else if (jobInfo.type === "prompt") {
+          useAppStore.getState().setActivityLogs((prev) => [
+            ...prev,
+            `[${new Date().toLocaleTimeString("ar-SA", { hour12: false })}] ⏳ ${message}`,
+          ]);
+        } else if (jobInfo.type === "app_eval") {
+          useAppStore.getState().setAppEvalRetryMessage(message);
+        }
+      });
+
       socket.on("job_complete", ({ jobId }) => {
         const jobInfo = activeJobs.current[jobId];
         if (!jobInfo) return;
+        
+        if (jobTimeouts.current[jobId]) {
+          clearTimeout(jobTimeouts.current[jobId]);
+          delete jobTimeouts.current[jobId];
+        }
 
-        if (jobInfo.type === "stage" && jobInfo.index !== undefined) {
+        if (jobInfo.type === "stage" && jobInfo.nodeId !== undefined) {
           useAppStore
             .getState()
             .setActivityLogs((prev) => [
@@ -337,7 +462,12 @@ export default function App() {
         const jobInfo = activeJobs.current[jobId];
         if (!jobInfo) return;
 
-        if (jobInfo.type === "stage" && jobInfo.index !== undefined) {
+        if (jobTimeouts.current[jobId]) {
+          clearTimeout(jobTimeouts.current[jobId]);
+          delete jobTimeouts.current[jobId];
+        }
+
+        if (jobInfo.type === "stage" && jobInfo.nodeId !== undefined) {
           useAppStore
             .getState()
             .setActivityLogs((prev) => [
@@ -359,23 +489,45 @@ export default function App() {
       socket.on("orchestrator_started", ({ jobId }) => {
         activeJobs.current[jobId] = { type: "orchestrator" };
       });
-      socket.on("orchestrator_stage_start", ({ jobId, stageIndex, stage }) => {
-        const stageJobId = `stage_${jobId}_${stageIndex}`;
-        activeJobs.current[stageJobId] = { type: "stage", index: stageIndex };
-        useAppStore.getState().setCurrentStage(stageIndex);
+      socket.on("orchestrator_stage_start", ({ jobId, nodeId, stage }) => {
+        const stageJobId = `stage_${jobId}_${nodeId}`;
+        activeJobs.current[stageJobId] = { type: "stage", nodeId: nodeId };
+        useAppStore.getState().setCurrentStage(nodeId);
+        useAppStore.getState().updateNode(nodeId, 'status', 'RUNNING');
+        useAppStore.getState().updateNode(nodeId, 'retryCount', stage.retryCount || 0);
+        useAppStore.getState().updateNode(nodeId, 'startTime', Date.now());
+        useAppStore.getState().updateNode(nodeId, 'timeoutReason', undefined);
         useAppStore.getState().setActivityLogs((prev) => [
           ...prev,
-          `[${new Date().toLocaleTimeString("ar-SA", { hour12: false })}] جاري تشغيل وكيل الذكاء الاصطناعي لمرحلة: ${stage.title}...`,
+          `[${new Date().toLocaleTimeString("ar-SA", { hour12: false })}] جاري تشغيل وكيل الذكاء الاصطناعي لمرحلة: ${stage.label}... (محاولة ${stage.retryCount || 0})`,
         ]);
       });
-      socket.on("orchestrator_stage_complete", ({ jobId, stageIndex }) => {
+      socket.on("orchestrator_stage_retry", ({ jobId, nodeId, error, retryCount, maxRetries }) => {
+        useAppStore.getState().updateNode(nodeId, 'retryCount', retryCount);
+        useAppStore.getState().updateNode(nodeId, 'startTime', Date.now());
+        useAppStore.getState().setActivityLogs((prev) => [
+          ...prev,
+          `[${new Date().toLocaleTimeString("ar-SA", { hour12: false })}] ⚠️ خطأ في مرحلة ${nodeId + 1}: ${error}. إعادة المحاولة ${retryCount}/${maxRetries}...`,
+        ]);
+      });
+      socket.on("orchestrator_stage_failed", ({ jobId, nodeId, error, errorDetails }) => {
+        useAppStore.getState().updateNode(nodeId, 'status', 'FAILED');
+        useAppStore.getState().updateNode(nodeId, 'errorDetails', errorDetails);
+        useAppStore.getState().setIsProcessing(false);
+        useAppStore.getState().setActivityLogs((prev) => [
+          ...prev,
+          `[${new Date().toLocaleTimeString("ar-SA", { hour12: false })}] ❌ فشل في مرحلة ${nodeId + 1}: ${error}`,
+        ]);
+      });
+      socket.on("orchestrator_stage_complete", ({ jobId, nodeId }) => {
+        useAppStore.getState().updateNode(nodeId, 'status', 'COMPLETED');
         const prevMetrics = useAppStore.getState().metrics;
         useAppStore.getState().setMetrics({
           ...prevMetrics,
-          completeness: Math.floor(((stageIndex + 1) / useAppStore.getState().workflowStages.length) * 100),
-          security: Math.min(100, Math.floor(((stageIndex + 1) / 10) * 100)),
-          performance: Math.min(100, Math.floor(((stageIndex + 1) / 15) * 100)),
-          accessibility: Math.min(100, Math.floor(((stageIndex + 1) / 12) * 100)),
+          completeness: Math.floor(((nodeId + 1) / useAppStore.getState().nodes.length) * 100),
+          security: Math.min(100, Math.floor(((nodeId + 1) / 10) * 100)),
+          performance: Math.min(100, Math.floor(((nodeId + 1) / 15) * 100)),
+          accessibility: Math.min(100, Math.floor(((nodeId + 1) / 12) * 100)),
         });
       });
       socket.on("orchestrator_prompt_start", ({ jobId }) => {
@@ -388,7 +540,7 @@ export default function App() {
       });
       socket.on("orchestrator_complete", ({ jobId }) => {
         useAppStore.getState().setIsProcessing(false);
-        useAppStore.getState().setCurrentStage(useAppStore.getState().workflowStages.length);
+        useAppStore.getState().setCurrentStage(null);
         delete activeJobs.current[jobId];
       });
       socket.on("orchestrator_error", ({ jobId, error }) => {
@@ -399,6 +551,41 @@ export default function App() {
 
       (window as any).ioSocket = socket;
     });
+
+    return () => {
+      if (activeSocket) {
+        activeSocket.off('connect');
+        activeSocket.off('disconnect');
+        activeSocket.off('connect_error');
+        activeSocket.off('job_started');
+        activeSocket.off('orchestrator_started');
+        activeSocket.off('orchestrator_stage_start');
+        activeSocket.off('stage_started');
+        activeSocket.off('orchestrator_stage_retry');
+        activeSocket.off('job_chunk');
+        activeSocket.off('stage_chunk');
+        activeSocket.off('job_complete');
+        activeSocket.off('orchestrator_stage_complete');
+        activeSocket.off('stage_completed');
+        activeSocket.off('orchestrator_stage_failed');
+        activeSocket.off('stage_failed');
+        activeSocket.off('orchestrator_prompt_start');
+        activeSocket.off('final_prompt_started');
+        activeSocket.off('orchestrator_error');
+        activeSocket.off('job_error');
+        activeSocket.off('orchestrator_complete');
+        activeSocket.off('orchestrator_completed');
+        activeSocket.off('orchestrator_cancelled');
+        activeSocket.off('final_prompt_chunk');
+        activeSocket.off('final_prompt_completed');
+        activeSocket.off('test_event');
+        // do not disconnect the global socket to avoid reconnection loops in strict mode
+      }
+      delete (window as any).ioSocket;
+      // Clear any pending timeouts
+      Object.values(jobTimeouts.current).forEach(clearTimeout);
+      jobTimeouts.current = {};
+    };
   }, []);
 
   useEffect(() => {
@@ -476,7 +663,7 @@ export default function App() {
       const res = await fetchWithKeys("/api/generate-mockup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idea }),
+        body: JSON.stringify({ idea, finalPrompt: useAppStore.getState().finalPrompt, stageArtifacts: useAppStore.getState().stageArtifacts }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -488,8 +675,8 @@ export default function App() {
           .getState()
           .updateProject(projectId, { mockupHtml: data.html });
       }
-    } catch (err: any) {
-      setMockupError(err.message || "حدث خطأ غير معروف");
+    } catch (err: unknown) {
+      setMockupError((err as Error).message || "حدث خطأ غير معروف");
       setMockupApiFinished(true);
     }
   };
@@ -501,6 +688,14 @@ export default function App() {
     setEvalContent("");
     const jobId = `eval_prompt_${Date.now()}_${Math.random().toString(36).substring(7)}`;
     activeJobs.current[jobId] = { type: "eval" };
+    jobTimeouts.current[jobId] = setTimeout(() => {
+      if (activeJobs.current[jobId]) {
+        useAppStore.getState().setEvalError("انتهى وقت الانتظار (Timeout). الخادم لا يستجيب ولم يرسل بيانات لفترة طويلة. يرجى المحاولة مرة أخرى.");
+        useAppStore.getState().setIsEvaluating(false);
+        delete activeJobs.current[jobId];
+        delete jobTimeouts.current[jobId];
+      }
+    }, 1800000); // 4 minutes idle timeout
 
     try {
       const res = await fetchWithKeys("/api/evaluate-prompt", {
@@ -510,8 +705,12 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed");
-    } catch (err: any) {
-      setEvalError(err.message || "حدث خطأ أثناء التقييم");
+    } catch (err: unknown) {
+      if (jobTimeouts.current[jobId]) {
+        clearTimeout(jobTimeouts.current[jobId]);
+        delete jobTimeouts.current[jobId];
+      }
+      setEvalError((err as Error).message || "حدث خطأ أثناء التقييم");
       setIsEvaluating(false);
       delete activeJobs.current[jobId];
     }
@@ -522,7 +721,8 @@ export default function App() {
   const [appEvalDepth, setAppEvalDepth] = useState<'quick' | 'deep'>('deep');
   const [appEvalAvailableFiles, setAppEvalAvailableFiles] = useState<{path: string, size: number}[]>([]);
   const [fileSearchQuery, setFileSearchQuery] = useState("");
-  const [appEvalSelectedFiles, setAppEvalSelectedFiles] = useState<string[]>(['src/App.tsx', 'server.ts']);
+  const [appEvalSelectedFiles, setAppEvalSelectedFiles] = useState<string[]>([]);
+  const [previewDevice, setPreviewDevice] = useState<'desktop' | 'mobile'>('desktop');
 
   useEffect(() => {
     if (mainMode === 'app_evaluator') {
@@ -531,9 +731,8 @@ export default function App() {
         .then(data => {
            if (Array.isArray(data)) {
              setAppEvalAvailableFiles(data);
-             if (data.length > 0 && appEvalSelectedFiles.length === 2 && appEvalSelectedFiles.includes('src/App.tsx') && appEvalSelectedFiles.includes('server.ts')) {
-                // Keep default if nothing else was chosen, or we can select all top level
-             }
+             // Select only essential files by default to avoid exceeding the limit
+             setAppEvalSelectedFiles(data.filter((f: { path: string }) => ['src/App.tsx', 'server.ts'].includes(f.path)).map((f: { path: string }) => f.path));
            }
         })
         .catch(console.error);
@@ -544,9 +743,18 @@ export default function App() {
     if (isAppEvaluating) return;
     setIsAppEvaluating(true);
     setAppEvalError("");
+    setAppEvalRetryMessage("");
     setAppEvalContent("");
     const jobId = `eval_self_${Date.now()}_${Math.random().toString(36).substring(7)}`;
     activeJobs.current[jobId] = { type: "app_eval" };
+    jobTimeouts.current[jobId] = setTimeout(() => {
+      if (activeJobs.current[jobId]) {
+        useAppStore.getState().setAppEvalError("انتهى وقت الانتظار (Timeout). الخادم لا يستجيب ولم يرسل بيانات لفترة طويلة. يرجى المحاولة مرة أخرى أو تقليل نطاق التركيز.");
+        useAppStore.getState().setIsAppEvaluating(false);
+        delete activeJobs.current[jobId];
+        delete jobTimeouts.current[jobId];
+      }
+    }, 1800000); // 4 minutes idle timeout
 
     try {
       const res = await fetchWithKeys("/api/evaluate-self", {
@@ -557,17 +765,13 @@ export default function App() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed");
 
-      // Fallback timeout to prevent infinite spinning if socket disconnects or hangs
-      setTimeout(() => {
-        if (activeJobs.current[jobId]) {
-          useAppStore.getState().setAppEvalError("انتهى وقت الانتظار (Timeout). التقرير كبيراً جداً ويستغرق الكثير من الوقت لمعالجته. يرجى المحاولة مرة أخرى أو تقليل نطاق التركيز.");
-          useAppStore.getState().setIsAppEvaluating(false);
-          delete activeJobs.current[jobId];
-        }
-      }, 610000); // 10 minutes and 10 seconds
-
-    } catch (err: any) {
-      setAppEvalError(err.message || "حدث خطأ أثناء التقييم");
+      // Idle timeout is now handled by the global job_chunk socket listener.
+    } catch (err: unknown) {
+      if (jobTimeouts.current[jobId]) {
+        clearTimeout(jobTimeouts.current[jobId]);
+        delete jobTimeouts.current[jobId];
+      }
+      setAppEvalError((err as Error).message || "حدث خطأ أثناء التقييم");
       setIsAppEvaluating(false);
       delete activeJobs.current[jobId];
     }
@@ -575,11 +779,21 @@ export default function App() {
 
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  const stopProduction = () => {
+  const stopProduction = async () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
+      if (currentJobIdRef.current) {
+        try {
+           await fetch(`/api/jobs/${currentJobIdRef.current}/cancel`, { method: 'POST' });
+        } catch(e) {}
+      }
       setIsProcessing(false);
-      setErrorText("تم إيقاف التنفيذ يدوياً. يمكنك استئناف العمل لاحقاً.");
+      setErrorText("تم إيقاف التنفيذ مؤقتاً (Paused). يمكنك استئناف العمل لاحقاً من نقطة التوقف.");
+      
+      const projectId = useAppStore.getState().currentProjectId;
+      if (projectId) {
+         // In DAG we don't just update currentStage, we let the backend emit canceled event
+      }
     }
   };
 
@@ -598,11 +812,20 @@ export default function App() {
           )
       : null;
 
-    const startingStage =
-      project && project.status === "غير مكتمل" ? project.currentStage || 0 : 0;
+    const startingStage = null;
 
     setIsProcessing(true);
     setCurrentStage(startingStage);
+    
+    useAppStore.getState().setNodes(
+      useAppStore.getState().nodes.map((stage, i) => {
+         if (stage.status !== "COMPLETED") {
+            return { ...stage, status: 'PENDING', errorDetails: null, retryCount: 0 };
+         }
+         return stage;
+      })
+    );
+
     setErrorText("");
     setFinalPrompt(startingStage === 0 ? "" : project?.finalPrompt || "");
     setCopied(false);
@@ -618,7 +841,7 @@ export default function App() {
       security: 0,
       performance: 0,
       accessibility: 0,
-      completeness: Math.floor((startingStage / workflowStages.length) * 100),
+      completeness: Math.floor((nodes.filter((n: any) => n.status === "COMPLETED").length / nodes.length) * 100),
     });
 
     let projectId = useAppStore.getState().currentProjectId;
@@ -631,7 +854,7 @@ export default function App() {
           idea.slice(0, 30) + (idea.length > 30 ? "..." : "") || "مشروع جديد",
         idea,
         status: "غير مكتمل",
-        currentStage: 0,
+        currentStage: null,
         stageArtifacts: {},
         activityLogs: [],
         finalPrompt: "",
@@ -644,7 +867,7 @@ export default function App() {
         .updateProject(projectId, { idea, status: "غير مكتمل" });
     }
 
-    const waitForJob = (jobId: string, timeoutMs: number = 600000, abortSignal?: AbortSignal) => {
+    const waitForJob = (jobId: string, timeoutMs: number = 3600000, abortSignal?: AbortSignal) => {
       return new Promise((resolve, reject) => {
         let timeoutId: any;
 
@@ -717,7 +940,7 @@ export default function App() {
       const res = await fetchWithKeys("/api/start-orchestration", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, idea, workflowStages, startingStage }),
+        body: JSON.stringify({ projectId, idea, nodes, edges }),
         signal: abortSignal,
       });
 
@@ -725,6 +948,7 @@ export default function App() {
       if (!res.ok) throw new Error(data.error || "Failed to start orchestrator");
       
       const jobId = data.jobId;
+      currentJobIdRef.current = jobId;
 
       await new Promise((resolve, reject) => {
         const socket = (window as any).ioSocket;
@@ -732,7 +956,7 @@ export default function App() {
         
         const onComplete = (dataMsg: any) => {
           if (dataMsg.jobId === jobId) {
-            cleanup(); resolve(null);
+            currentJobIdRef.current = null; cleanup(); resolve(null);
           }
         };
         const onError = (dataMsg: any) => {
@@ -757,7 +981,7 @@ export default function App() {
 
       addNotification(`🎉 اكتمل مسار العمل بالكامل بنجاح!`);
       useAppStore.getState().updateProject(projectId, {
-        currentStage: workflowStages.length,
+        currentStage: null,
         stageArtifacts: useAppStore.getState().stageArtifacts,
         activityLogs: useAppStore.getState().activityLogs,
         finalPrompt: useAppStore.getState().finalPrompt,
@@ -799,21 +1023,28 @@ export default function App() {
         <TopNavbar setSidebarOpen={setSidebarOpen} />
 
         {/* Scrollable Content */}
-        <main className="flex-1 overflow-y-auto p-4 md:p-8 custom-scrollbar relative">
+        <motion.main 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.6 }}
+          className="flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-8 custom-scrollbar relative"
+        >
           {/* subtle background glow */}
           <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-indigo-500/10 blur-[120px] rounded-full pointer-events-none"></div>
 
           <div className="max-w-7xl mx-auto relative z-10">
             {/* Header Section for current mode */}
             <div className="mb-8">
-              <h1 className="text-3xl font-semibold tracking-tight text-white mb-2">
+              <h1 className="text-2xl md:text-3xl font-semibold tracking-tight text-white mb-2">
                 {mainMode === "orchestrator"
                   ? "تنسيق مهام الذكاء الاصطناعي"
                   : mainMode === "workflow_editor"
                     ? "محرر مسار العمل الرسومي"
                     : mainMode === "repository"
                       ? "المستودع الرقمي"
-                      : "التدقيق الذاتي للمنظومة"}
+                      : mainMode === "live_preview"
+                        ? "المعاينة الحية للمشاريع"
+                        : "التدقيق الذاتي للمنظومة"}
               </h1>
               <p className="text-zinc-400 text-sm">
                 {mainMode === "orchestrator"
@@ -822,14 +1053,25 @@ export default function App() {
                     ? "قم بتصميم الاعتماديات وتدفق البيانات بين وكلاء الذكاء الاصطناعي بشكل مرئي (DAG)."
                     : mainMode === "repository"
                       ? "مساحة لحفظ مشاريعك المكتملة وإدارتها وإعادة تعديلها بمرونة."
-                      : "تحليل المنظومة المعمارية الحالية واقتراح تحسينات للارتقاء بها لمستوى المؤسسات."}
+                      : mainMode === "live_preview"
+                        ? "قم بمعاينة مشاريعك وتطبيقاتك بشكل مباشر، يمكنك أيضاً استيراد مجلد كامل لرفعه وتجربته هنا."
+                        : "تحليل المنظومة المعمارية الحالية واقتراح تحسينات للارتقاء بها لمستوى المؤسسات."}
               </p>
             </div>
 
             {mainMode === "orchestrator" && (
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, staggerChildren: 0.1 }}
+                className="grid grid-cols-1 lg:grid-cols-12 gap-8"
+              >
                 {/* Right Panel: Input & Status (First in DOM for RTL) */}
-                <div className="col-span-1 lg:col-span-4 flex flex-col gap-6">
+                <motion.div 
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  className="col-span-1 lg:col-span-4 flex flex-col gap-6"
+                >
                   {/* Idea Input Card */}
                   <div className="bg-[#0f0f0f] border border-white/10 p-6 rounded-2xl shadow-xl relative overflow-hidden">
                     <div className="flex items-center justify-between mb-4">
@@ -869,7 +1111,7 @@ export default function App() {
                         </button>
                       </div>
                       {currentSuggestions.map((item, idx) => (
-                        <button
+                        <button aria-label="button" 
                           key={idx}
                           onClick={() => !isProcessing && setIdea(item.text)}
                           disabled={isProcessing}
@@ -881,24 +1123,34 @@ export default function App() {
                       ))}
                     </div>
 
+                    {errorText && (
+                      <div className="mb-4 p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-sm leading-relaxed">
+                        <div className="flex items-center gap-2 font-bold mb-1">
+                          <AlertTriangle size={16} />
+                          <span>توقف التنفيذ بسبب خطأ:</span>
+                        </div>
+                        {errorText}
+                      </div>
+                    )}
                     <div className="flex gap-2 w-full">
-                      <button
+                      <button aria-label="button" 
                         onClick={startProduction}
                         disabled={isProcessing}
                         className={`flex-1 py-3.5 rounded-xl font-medium flex items-center justify-center gap-2 transition-all duration-200 ${
                           errorText
-                            ? "bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20"
+                            ? "bg-rose-500 hover:bg-rose-600 text-white shadow-[0_0_20px_rgba(244,63,94,0.3)] border border-rose-500/20"
                             : isProcessing
                               ? "bg-zinc-800 text-zinc-500 cursor-wait"
                               : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-[0_0_20px_rgba(79,70,229,0.2)] hover:shadow-[0_0_25px_rgba(79,70,229,0.4)]"
                         }`}
                       >
-                        {errorText ||
-                          (isProcessing
+                        {errorText
+                          ? "إعادة المحاولة (حدث خطأ)"
+                          : isProcessing
                             ? "جاري التنفيذ..."
                             : finalPrompt
                               ? "إعادة التنفيذ"
-                              : "بدء مسار العمل")}
+                              : "بدء مسار العمل"}
                         {!isProcessing &&
                           !errorText &&
                           (finalPrompt ? (
@@ -996,7 +1248,7 @@ export default function App() {
                             <div className="flex flex-col gap-1 items-start w-full">
                               <span className="leading-relaxed">{logText}</span>
                               {errorDetails && (
-                                <button
+                                <button aria-label="button" 
                                   onClick={() =>
                                     setErrorDetailsDialog({
                                       isOpen: true,
@@ -1016,10 +1268,14 @@ export default function App() {
                       <div ref={logsEndRef} />
                     </div>
                   </div>
-                </div>
+                </motion.div>
 
                 {/* Left Panel: Stages & Outputs */}
-                <div className="col-span-1 lg:col-span-8 flex flex-col gap-6">
+                <motion.div 
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  className="col-span-1 lg:col-span-8 flex flex-col gap-6"
+                >
                   {/* Pipeline View */}
                   <div className="bg-[#0f0f0f] border border-white/10 p-6 rounded-2xl shadow-xl relative overflow-hidden">
                     <div className="flex justify-between items-center mb-6">
@@ -1027,36 +1283,46 @@ export default function App() {
                         <FolderKanban size={14} className="text-indigo-400" />
                         المهام الجارية (Active Pipeline)
                       </label>
-                      <button className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 bg-indigo-500/10 px-2.5 py-1 rounded-md transition-colors border border-indigo-500/20">
+                      <button aria-label="button"  className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 bg-indigo-500/10 px-2.5 py-1 rounded-md transition-colors border border-indigo-500/20">
                         عرض كـ رسوم بيانية (DAG)
                       </button>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {workflowStages.map((stage, index) => {
-                        const isActive = currentStage === index;
-                        const isCompleted = currentStage > index;
+                      {nodes.map((stage, index) => {
+                        const isActive = currentStage === stage.id;
+                        const isCompleted = stage.status === "COMPLETED";
+                        const status = stage.status || (isCompleted ? 'COMPLETED' : (isActive ? 'RUNNING' : 'PENDING'));
 
                         let containerStyle =
                           "bg-[#050505] border-white/5 text-zinc-500";
-                        if (isActive)
+                        if (status === 'RUNNING')
                           containerStyle =
                             "bg-indigo-500/10 border-indigo-500/30 text-indigo-300 ring-1 ring-indigo-500/20";
-                        else if (isCompleted)
+                        else if (status === 'COMPLETED')
                           containerStyle =
                             "bg-white/5 border-white/10 text-zinc-300 hover:bg-white/10 hover:border-white/20";
+                        else if (status === 'FAILED')
+                          containerStyle =
+                            "bg-red-500/10 border-red-500/30 text-red-300 ring-1 ring-red-500/20";
+                        else if (status === 'CANCELED')
+                          containerStyle =
+                            "bg-orange-500/10 border-orange-500/30 text-orange-300 ring-1 ring-orange-500/20";
 
                         return (
-                          <div
+                          <motion.div
+                            initial={{ opacity: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            transition={{ duration: 0.3, delay: index * 0.05 }}
                             key={index}
                             ref={(el) => {
                               if (el) stageRefs.current[index] = el;
                             }}
                             className={`border p-4 rounded-xl flex flex-col relative transition-all duration-300 cursor-pointer group ${containerStyle}`}
                             onClick={() => {
-                              if (isCompleted && stageArtifacts[index]) {
+                              if (status === 'COMPLETED' && stageArtifacts[index]) {
                                 setSelectedArtifact({
-                                  title: stage.title,
+                                  title: stage.label,
                                   content: stageArtifacts[index],
                                 });
                               }
@@ -1064,35 +1330,96 @@ export default function App() {
                           >
                             <div className="flex justify-between items-start mb-3">
                               <span
-                                className={`text-xs font-mono font-bold ${isActive ? "text-indigo-400" : "opacity-50"}`}
+                                className={`text-xs font-mono font-bold ${status === 'RUNNING' ? "text-indigo-400" : status === 'FAILED' ? "text-red-400" : status === 'CANCELED' ? "text-orange-400" : "opacity-50"}`}
                               >
                                 {(index + 1).toString().padStart(2, "0")}
                               </span>
-                              {isCompleted && (
+                              {status === 'COMPLETED' && (
                                 <div className="w-5 h-5 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center border border-emerald-500/20">
                                   <Check size={12} />
                                 </div>
                               )}
-                              {isActive && (
+                              {status === 'RUNNING' && (
                                 <div className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse mt-1.5 shadow-[0_0_8px_rgba(129,140,248,0.8)]"></div>
+                              )}
+                              {status === 'FAILED' && (
+                                <div className="w-5 h-5 rounded-full bg-red-500/10 text-red-400 flex items-center justify-center border border-red-500/20">
+                                  <AlertCircle size={12} />
+                                </div>
+                              )}
+                              {status === 'CANCELED' && (
+                                <div className="w-5 h-5 rounded-full bg-orange-500/10 text-orange-400 flex items-center justify-center border border-orange-500/20">
+                                  <Pause size={12} />
+                                </div>
                               )}
                             </div>
 
                             <h4
-                              className={`text-sm font-semibold mb-3 ${isActive ? "text-white" : ""}`}
+                              className={`text-sm font-semibold mb-3 ${status === 'RUNNING' || status === 'FAILED' || status === 'CANCELED' ? "text-white" : ""}`}
                             >
-                              {stage.title}
+                              {stage.label}
                             </h4>
 
+                            {status === 'RUNNING' && (stage as any).startTime && (
+                              <CountdownTimer startTime={(stage as any).startTime} stageName={stage.label} />
+                            )}
+
+                            {status === 'FAILED' && (
+                              <div className="mb-3 text-xs text-red-300/80 bg-red-500/5 p-2 rounded-lg border border-red-500/10">
+                                {(stage as any).errorDetails ? String((stage as any).errorDetails).substring(0, 50) + "..." : "خطأ غير معروف"}
+                              </div>
+                            )}
+
+                            {status === 'FAILED' && (
+                              <div className="flex gap-2 mt-2" onClick={(e) => e.stopPropagation()}>
+                                <button aria-label="button"  
+                                  className="flex-1 py-1.5 bg-indigo-500 hover:bg-indigo-600 text-white text-xs rounded transition-colors"
+                                  onClick={() => {
+                                     const projectId = useAppStore.getState().currentProjectId;
+                                     if (projectId) {
+                                        useAppStore.getState().updateProject(projectId, { currentStage: stage.id, status: "غير مكتمل" });
+                                        useAppStore.getState().updateNode(stage.id, 'status', 'PENDING');
+                                        useAppStore.getState().updateNode(stage.id, 'retryCount', 0);
+                                        useAppStore.getState().updateNode(stage.id, 'errorDetails', null);
+                                        startProduction();
+                                     }
+                                  }}
+                                >
+                                  إعادة المحاولة
+                                </button>
+                                <button aria-label="button"  
+                                  className="flex-1 py-1.5 bg-zinc-700 hover:bg-zinc-600 text-zinc-200 text-xs rounded transition-colors"
+                                  onClick={() => {
+                                     useAppStore.getState().setMainMode('workflow_editor');
+                                  }}
+                                >
+                                  تعديل
+                                </button>
+                                <button aria-label="button"  
+                                  className="flex-1 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs rounded transition-colors"
+                                  onClick={() => {
+                                     const projectId = useAppStore.getState().currentProjectId;
+                                     if (projectId) {
+                                        useAppStore.getState().updateProject(projectId, { currentStage: null, status: "غير مكتمل" });
+                                        useAppStore.getState().updateNode(stage.id, 'status', 'COMPLETED');
+                                        startProduction();
+                                     }
+                                  }}
+                                >
+                                  تخطي
+                                </button>
+                              </div>
+                            )}
+
                             <div
-                              className={`mt-auto flex items-center gap-2 text-xs ${isActive ? "opacity-90" : "opacity-60"}`}
+                              className={`mt-auto flex items-center gap-2 text-xs pt-3 ${status === 'RUNNING' ? "opacity-90" : "opacity-60"}`}
                             >
                               <FileCode size={12} />
                               <span className="font-mono truncate">
                                 {stage.artifact}
                               </span>
                             </div>
-                          </div>
+                          </motion.div>
                         );
                       })}
                     </div>
@@ -1119,19 +1446,19 @@ export default function App() {
 
                         <div className="flex items-center gap-2">
                           <div className="flex bg-white/5 p-1 rounded-lg border border-white/5">
-                            <button
+                            <button aria-label="button" 
                               onClick={() => setActiveTab("edit")}
                               className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm transition-all font-medium ${activeTab === "edit" ? "bg-white/10 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-200"}`}
                             >
                               <Code2 size={14} /> كود المصدر
                             </button>
-                            <button
+                            <button aria-label="button" 
                               onClick={() => setActiveTab("markdown")}
                               className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm transition-all font-medium ${activeTab === "markdown" ? "bg-white/10 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-200"}`}
                             >
                               <FileCode size={14} /> التقرير
                             </button>
-                            <button
+                            <button aria-label="button" 
                               onClick={() => {
                                 setActiveTab("app");
                                 generateMockup();
@@ -1155,7 +1482,7 @@ export default function App() {
                               className="w-full h-[600px] p-6 font-mono text-sm text-zinc-300 bg-[#050505] resize-y focus:outline-none focus:bg-white/[0.02] text-left leading-relaxed custom-scrollbar"
                               spellCheck="false"
                             />
-                            <button
+                            <button aria-label="button" 
                               onClick={copyPrompt}
                               className="absolute top-4 right-4 bg-white/10 hover:bg-white/20 p-2 rounded-lg backdrop-blur text-white opacity-0 group-hover:opacity-100 transition-all border border-white/10"
                             >
@@ -1180,106 +1507,150 @@ export default function App() {
                         )}
 
                         {activeTab === "app" && (
-                          <div className="w-full h-[700px] bg-white relative rounded-b-2xl overflow-hidden">
-                            {isGeneratingMockup ||
-                            (mockupSimTimeLeft > 0 && !mockupError) ? (
-                              <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#050505] text-white p-6 z-10">
-                                <div className="animate-spin rounded-full h-12 w-12 border-2 border-white/10 border-t-indigo-500 mb-6"></div>
-                                <h3 className="font-medium text-lg text-zinc-100 mb-2">
-                                  جاري تهيئة بيئة الاختبار المعزولة...
-                                </h3>
-                                <p className="text-zinc-400 text-sm mb-8 text-center max-w-sm">
-                                  يتم الآن نشر الكود على بنية تحتية مؤقتة
-                                  للمعاينة الحية.
-                                </p>
-
-                                <div
-                                  className="w-full max-w-md bg-black rounded-xl p-5 border border-white/10 text-left font-mono shadow-2xl"
-                                  dir="ltr"
-                                >
-                                  <div className="flex justify-between text-xs text-zinc-500 mb-4 pb-2 border-b border-white/5">
-                                    <span>Deployment Progress</span>
-                                    <span>
-                                      00:
-                                      {mockupSimTimeLeft
-                                        .toString()
-                                        .padStart(2, "0")}
-                                    </span>
-                                  </div>
-                                  <div className="flex flex-col gap-2 h-[120px] overflow-y-auto pr-2 custom-scrollbar">
-                                    {mockupSimFiles.map((file, i) => (
-                                      <div
-                                        key={i}
-                                        className="flex justify-between items-center text-xs text-zinc-400"
-                                      >
-                                        <span className="flex items-center gap-2">
-                                          <Check
-                                            size={12}
-                                            className="text-emerald-500"
-                                          />{" "}
-                                          {file}
-                                        </span>
-                                        <span className="text-emerald-500/70">
-                                          Done
-                                        </span>
-                                      </div>
-                                    ))}
-                                    {mockupSimTimeLeft > 0 &&
-                                      mockupSimFiles.length <
-                                        MOCKUP_FILES.length && (
-                                        <div className="flex justify-between items-center text-xs text-zinc-300">
-                                          <span className="flex items-center gap-2">
-                                            <Terminal
-                                              size={12}
-                                              className="animate-pulse text-indigo-400"
-                                            />{" "}
-                                            {
-                                              MOCKUP_FILES[
-                                                mockupSimFiles.length
-                                              ]
-                                            }
-                                          </span>
-                                          <FileProgressIndicator
-                                            key={mockupSimFiles.length}
-                                          />
-                                        </div>
-                                      )}
-                                  </div>
-                                </div>
+                          <div className="w-full bg-[#050505] relative rounded-b-2xl overflow-hidden flex flex-col border-t border-white/5">
+                            {/* Browser Header / Toolbar */}
+                            <div className="bg-[#1a1a1a] px-4 py-3 flex items-center gap-4 border-b border-white/5">
+                              <div className="flex gap-1.5">
+                                <div className="w-3 h-3 rounded-full bg-rose-500/80"></div>
+                                <div className="w-3 h-3 rounded-full bg-amber-500/80"></div>
+                                <div className="w-3 h-3 rounded-full bg-emerald-500/80"></div>
                               </div>
-                            ) : mockupError ? (
-                              <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#050505] text-rose-400 p-6 z-10 text-center">
-                                <div className="bg-rose-500/10 p-4 rounded-full mb-4 border border-rose-500/20">
-                                  <Shield size={32} className="text-rose-500" />
-                                </div>
-                                <p className="font-medium text-lg text-white mb-2">
-                                  فشل نشر بيئة الاختبار
-                                </p>
-                                <p className="text-sm text-rose-400/80 max-w-md mb-6">
-                                  {mockupError}
-                                </p>
-                                <button
-                                  onClick={generateMockup}
-                                  className="px-6 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-400 rounded-lg text-sm font-medium transition-colors"
+                              <div className="flex gap-2 text-zinc-400">
+                                <button aria-label="button" 
+                                  className="p-1.5 hover:bg-white/5 hover:text-white rounded transition-colors"
+                                  onClick={() => {
+                                    setMockupHtml("");
+                                    generateMockup();
+                                  }}
+                                  title="إعادة توليد وتحميل"
                                 >
-                                  إعادة المحاولة
+                                  <RefreshCw size={14} className={isGeneratingMockup ? "animate-spin" : ""} />
                                 </button>
                               </div>
-                            ) : (
-                              <iframe
-                                srcDoc={mockupHtml}
-                                className="w-full h-full border-0 bg-white"
-                                sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
-                                title="App Mockup"
-                              />
-                            )}
+                              <div className="flex-1 bg-black/50 rounded-md px-3 py-1.5 text-xs text-zinc-500 font-mono text-center border border-white/5 flex items-center justify-center gap-2">
+                                <Lock size={10} className="text-emerald-500/70" />
+                                app.preview.local
+                              </div>
+                              <div className="flex gap-1 bg-black/40 p-1 rounded-lg border border-white/5">
+                                <button aria-label="button" 
+                                  className={`p-1.5 rounded-md transition-all ${previewDevice === 'desktop' ? 'bg-white/10 text-white shadow-sm' : 'text-zinc-500 hover:text-white'}`}
+                                  onClick={() => setPreviewDevice('desktop')}
+                                  title="عرض سطح المكتب"
+                                >
+                                  <Monitor size={14} />
+                                </button>
+                                <button aria-label="button" 
+                                  className={`p-1.5 rounded-md transition-all ${previewDevice === 'mobile' ? 'bg-white/10 text-white shadow-sm' : 'text-zinc-500 hover:text-white'}`}
+                                  onClick={() => setPreviewDevice('mobile')}
+                                  title="عرض الهاتف"
+                                >
+                                  <Smartphone size={14} />
+                                </button>
+                              </div>
+                              <div className="flex gap-2 pl-2 border-l border-white/10">
+                                <button aria-label="button" 
+                                  className="p-1.5 text-zinc-400 hover:text-white hover:bg-white/5 rounded transition-colors"
+                                  onClick={() => {
+                                    const blob = new Blob([mockupHtml], { type: 'text/html' });
+                                    const url = URL.createObjectURL(blob);
+                                    const a = document.createElement('a');
+                                    a.href = url;
+                                    a.download = 'prototype.html';
+                                    a.click();
+                                    URL.revokeObjectURL(url);
+                                  }}
+                                  title="تحميل كود المصدر"
+                                >
+                                  <Download size={14} />
+                                </button>
+                                <button aria-label="button" 
+                                  className="p-1.5 text-zinc-400 hover:text-white hover:bg-white/5 rounded transition-colors"
+                                  onClick={() => {
+                                    const blob = new Blob([mockupHtml], { type: 'text/html' });
+                                    const url = URL.createObjectURL(blob);
+                                    window.open(url, '_blank');
+                                  }}
+                                  title="فتح في نافذة جديدة"
+                                >
+                                  <ExternalLink size={14} />
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="h-[750px] w-full bg-[#0a0a0a] flex items-center justify-center overflow-auto custom-scrollbar p-6 relative">
+                              {/* Background Grid Pattern */}
+                              <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:24px_24px]"></div>
+
+                              {isGeneratingMockup || (mockupSimTimeLeft > 0 && !mockupError) ? (
+                                <div className="relative flex flex-col items-center justify-center bg-[#0f0f0f] border border-white/10 rounded-2xl text-white p-8 z-10 shadow-2xl max-w-lg w-full">
+                                  <div className="animate-spin rounded-full h-12 w-12 border-2 border-white/10 border-t-indigo-500 mb-6"></div>
+                                  <h3 className="font-medium text-lg text-zinc-100 mb-2">
+                                    جاري تهيئة بيئة الاختبار المعزولة...
+                                  </h3>
+                                  <p className="text-zinc-400 text-sm mb-8 text-center">
+                                    يتم الآن نشر الكود على بنية تحتية مؤقتة للمعاينة الحية.
+                                  </p>
+
+                                  <div className="w-full bg-black rounded-xl p-5 border border-white/10 text-left font-mono shadow-inner" dir="ltr">
+                                    <div className="flex justify-between text-xs text-zinc-500 mb-4 pb-2 border-b border-white/5">
+                                      <span>Deployment Progress</span>
+                                      <span>00:{mockupSimTimeLeft.toString().padStart(2, "0")}</span>
+                                    </div>
+                                    <div className="flex flex-col gap-2 h-[120px] overflow-y-auto pr-2 custom-scrollbar">
+                                      {mockupSimFiles.map((file, i) => (
+                                        <div key={i} className="flex justify-between items-center text-xs text-zinc-400">
+                                          <span className="flex items-center gap-2">
+                                            <Check size={12} className="text-emerald-500" /> {file}
+                                          </span>
+                                          <span className="text-emerald-500/70">Done</span>
+                                        </div>
+                                      ))}
+                                      {mockupSimTimeLeft > 0 && mockupSimFiles.length < MOCKUP_FILES.length && (
+                                        <div className="flex justify-between items-center text-xs text-zinc-300">
+                                          <span className="flex items-center gap-2">
+                                            <Terminal size={12} className="animate-pulse text-indigo-400" /> {MOCKUP_FILES[mockupSimFiles.length]}
+                                          </span>
+                                          <FileProgressIndicator key={mockupSimFiles.length} />
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : mockupError ? (
+                                <div className="relative flex flex-col items-center justify-center bg-[#0f0f0f] border border-rose-500/20 rounded-2xl text-rose-400 p-8 z-10 text-center shadow-2xl max-w-lg w-full">
+                                  <div className="bg-rose-500/10 p-4 rounded-full mb-4 border border-rose-500/20">
+                                    <Shield size={32} className="text-rose-500" />
+                                  </div>
+                                  <p className="font-medium text-lg text-white mb-2">فشل نشر بيئة الاختبار</p>
+                                  <p className="text-sm text-rose-400/80 max-w-md mb-6">{mockupError}</p>
+                                  <button aria-label="button"  onClick={generateMockup} className="px-6 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-400 rounded-lg text-sm font-medium transition-colors">
+                                    إعادة المحاولة
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className={`transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)] relative bg-white shadow-2xl ${previewDevice === 'mobile' ? 'w-[375px] h-[812px] rounded-[2.5rem] border-[12px] border-[#1a1a1a] shadow-[0_0_0_1px_rgba(255,255,255,0.1),0_20px_40px_rgba(0,0,0,0.5)]' : 'w-full h-full rounded-lg border border-white/10'}`}>
+                                  {previewDevice === 'mobile' && (
+                                    <>
+                                      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-6 bg-[#1a1a1a] rounded-b-3xl z-20"></div>
+                                      <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 w-32 h-1.5 bg-black/20 rounded-full z-20"></div>
+                                    </>
+                                  )}
+                                  <iframe
+                                    srcDoc={mockupHtml}
+                                    className="w-full h-full border-0 bg-white"
+                                    sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
+                                    title="App Mockup"
+                                  />
+                                </div>
+                              )}
+                            </div>
                           </div>
                         )}
                       </div>
                     </div>
                   </div>
-                </div>
-              </div>
+                </motion.div>
+              </motion.div>
             )}
 
             {mainMode === "workflow_editor" && (
@@ -1410,14 +1781,32 @@ export default function App() {
                       <div className="flex items-center justify-between mb-2">
                         <label className="text-sm font-medium text-zinc-300">اختيار الملفات لسياق الوكيل:</label>
                         <div className="flex gap-4">
-                          <button 
+                          <button aria-label="button"  
+                            onClick={() => {
+                              fetchWithKeys('/api/project/files')
+                                .then(res => res.json())
+                                .then(data => {
+                                   if (Array.isArray(data)) {
+                                     setAppEvalAvailableFiles(data);
+                                     const defaultFiles = ['src/App.tsx', 'server.ts'];
+                                     setAppEvalSelectedFiles(data.filter((f: { path: string }) => defaultFiles.includes(f.path)).map((f: { path: string }) => f.path));
+                                   }
+                                })
+                                .catch(console.error);
+                            }}
+                            className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
+                            disabled={isAppEvaluating}
+                          >
+                            <RefreshCw size={12} /> تحديث الملفات
+                          </button>
+                          <button aria-label="button"  
                             onClick={() => setAppEvalSelectedFiles(appEvalAvailableFiles.map(f => f.path))}
                             className="text-xs text-indigo-400 hover:text-indigo-300"
                             disabled={isAppEvaluating}
                           >
                             تحديد الكل
                           </button>
-                          <button 
+                          <button aria-label="button"  
                             onClick={() => setAppEvalSelectedFiles([])}
                             className="text-xs text-zinc-400 hover:text-zinc-300"
                             disabled={isAppEvaluating}
@@ -1508,12 +1897,12 @@ export default function App() {
                     </div>
                   </div>
 
-                  <button
+                  <button aria-label="button" 
                     onClick={generateAppEvaluation}
-                    disabled={isAppEvaluating}
+                    disabled={isAppEvaluating || appEvalSelectedFiles.reduce((acc, path) => acc + (appEvalAvailableFiles.find(f => f.path === path)?.size || 0), 0) > 300000}
                     className={`px-8 py-3.5 rounded-xl font-medium transition-all flex items-center justify-center gap-2 mx-auto ${
-                      isAppEvaluating
-                        ? "bg-zinc-800 text-zinc-500 cursor-wait"
+                      isAppEvaluating || appEvalSelectedFiles.reduce((acc, path) => acc + (appEvalAvailableFiles.find(f => f.path === path)?.size || 0), 0) > 300000
+                        ? "bg-zinc-800 text-zinc-500 cursor-not-allowed"
                         : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-[0_0_20px_rgba(79,70,229,0.3)] hover:shadow-[0_0_30px_rgba(79,70,229,0.5)]"
                     }`}
                   >
@@ -1540,7 +1929,7 @@ export default function App() {
                   )}
                 </div>
 
-                {appEvalContent && (
+                {(appEvalContent || isAppEvaluating) && (
                   <div className="mt-8 flex bg-[#0f0f0f] border border-white/10 rounded-2xl overflow-hidden shadow-2xl animate-in slide-in-from-bottom-8 duration-500 relative">
                     <div className="hidden lg:block w-64 shrink-0 border-l border-white/5 bg-black/40 p-6 overflow-y-auto custom-scrollbar sticky top-0 max-h-[80vh]">
                       <h4 className="text-sm font-semibold text-zinc-400 mb-4 tracking-wider">محتويات التقرير</h4>
@@ -1574,7 +1963,7 @@ export default function App() {
                           <FileCode size={16} className="text-indigo-400" />
                           التقرير المعماري النهائي
                         </h3>
-                        <button
+                        <button aria-label="button" 
                           onClick={() => {
                             navigator.clipboard.writeText(appEvalContent);
                             setCopied(true);
@@ -1593,13 +1982,23 @@ export default function App() {
                         className="p-8 prose prose-invert prose-zinc max-w-none text-right prose-pre:bg-[#0a0a0a] prose-pre:border prose-pre:border-white/10 prose-headings:font-semibold custom-scrollbar overflow-y-auto max-h-[80vh] app-eval-markdown"
                         dir="rtl"
                       >
-                        <Markdown>{appEvalContent}</Markdown>
+                        {appEvalContent ? (
+                          <Markdown>{appEvalContent}</Markdown>
+                        ) : (
+                          <div className="flex flex-col items-center justify-center py-20 text-zinc-500 space-y-4">
+                            <RefreshCw size={32} className="animate-spin text-indigo-500/50" />
+                            <p>جاري تحليل الكود المصدري وإنشاء التقرير المعماري، يرجى الانتظار...</p>
+                            {appEvalRetryMessage && <p className="text-sm text-amber-500 max-w-md text-center">{appEvalRetryMessage}</p>}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
                 )}
               </div>
             )}
+
+            {mainMode === 'live_preview' && <LivePreview />}
 
             {mainMode === 'settings' && (
               <div className="max-w-4xl mx-auto animate-in fade-in duration-300">
@@ -1665,7 +2064,7 @@ export default function App() {
               </div>
             )}
           </div>
-        </main>
+        </motion.main>
       </div>
 
       {/* Error Details Modal */}
@@ -1677,7 +2076,7 @@ export default function App() {
                 <Terminal size={18} />
                 {errorDetailsDialog.title}
               </h3>
-              <button
+              <button aria-label="button" 
                 onClick={() =>
                   setErrorDetailsDialog({
                     isOpen: false,
@@ -1699,7 +2098,7 @@ export default function App() {
               </pre>
             </div>
             <div className="p-4 border-t border-white/5 bg-black/40 flex justify-end">
-              <button
+              <button aria-label="button" 
                 onClick={() =>
                   setErrorDetailsDialog({
                     isOpen: false,
@@ -1725,7 +2124,7 @@ export default function App() {
                 <FileCode size={18} className="text-indigo-400" />
                 {selectedArtifact.title}
               </h3>
-              <button
+              <button aria-label="button" 
                 onClick={() => setSelectedArtifact(null)}
                 className="text-zinc-400 hover:text-white p-2 rounded-lg hover:bg-white/10 transition-colors border border-transparent hover:border-white/5"
               >
@@ -1743,6 +2142,42 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {!isConnected && (
+        <div className="fixed bottom-4 left-4 right-4 md:right-auto md:w-96 bg-red-500 text-white px-4 py-3 rounded-xl shadow-lg flex items-center gap-3 z-[100] animate-in fade-in slide-in-from-bottom-5">
+          <div className="w-2 h-2 rounded-full bg-white animate-pulse"></div>
+          <span className="font-medium text-sm">الاتصال بالخادم مقطوع... جاري إعادة المحاولة</span>
+          <button aria-label="button" onClick={() => window.location.reload()} className="mr-auto bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition">تحديث الصفحة</button>
+        </div>
+      )}
+
+      {/* Toast Notifications */}
+      <div className="fixed bottom-16 left-4 right-4 md:right-auto md:w-96 z-[110] flex flex-col gap-2 pointer-events-none">
+        <AnimatePresence>
+          {notifications.filter(n => !n.read).map(notification => (
+            <motion.div
+              key={notification.id}
+              initial={{ opacity: 0, y: 20, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -20, scale: 0.9 }}
+              className="bg-[#1e1e2e] border border-white/10 text-white px-4 py-3 rounded-xl shadow-2xl flex items-start gap-3 pointer-events-auto"
+            >
+              <div className="mt-0.5 text-indigo-400">
+                <Bell size={16} />
+              </div>
+              <div className="flex-1 text-sm leading-relaxed">
+                {notification.message}
+              </div>
+              <button
+                onClick={() => markNotificationRead(notification.id)}
+                className="text-zinc-500 hover:text-white transition-colors"
+              >
+                <X size={14} />
+              </button>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }

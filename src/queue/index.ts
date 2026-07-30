@@ -146,11 +146,11 @@ Please rewrite the output to fix these issues.`;
           logData: stepLogs
         }).where(eq(executionLogs.id, executionId));
         
-      } catch (e: any) {
+      } catch (e: unknown) {
         console.error('Job error', e);
         await db.update(executionLogs).set({ 
           status: 'failed',
-          logData: { error: e.message }
+          logData: { error: (e as Error).message }
         }).where(eq(executionLogs.id, executionId));
       }
     }

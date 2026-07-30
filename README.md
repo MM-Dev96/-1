@@ -1,20 +1,15 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# NexusSaaS
 
-# Run and deploy your AI Studio app
+نظام وكلاء ذكاء اصطناعي (AI Agents) لتوليد البرمجيات والمشاريع.
+تم تحديث المشروع ليعمل عبر محرك مهام موجه (DAG Engine) بدلاً من التسلسل الخطي، مما يسمح للوكلاء بالعمل بالتوازي وتمرير السياق بينهم بناءً على الاعتماديات (Dependencies).
 
-This contains everything you need to run your app locally.
+## المميزات
+- **محرك DAG (Directed Acyclic Graph):** تشغيل الوكلاء بشكل متوازي مع احترام الاعتماديات.
+- **محرر مسار العمل:** واجهة مرئية (ReactFlow) لتعديل مهام الوكلاء وربطهم.
+- **معاينة حية:** توليد وتجربة واجهة المستخدم النهائية (Mockup) بعد انتهاء الوكلاء.
+- **حفظ المشاريع:** حفظ وتصفح المشاريع السابقة والمخرجات.
 
-View your app in AI Studio: https://ai.studio/apps/be845a7d-0e7f-46c0-a8ca-b8e3ce43e3aa
-
-## Run Locally
-
-**Prerequisites:**  Node.js
-
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## بدء التشغيل
+\`\`\`bash
+npm run dev
+\`\`\`

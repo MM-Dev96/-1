@@ -1,36 +1,11 @@
+import { WorkflowNode, WorkflowEdge } from './types/index.ts';
+import { defaultWorkflowNodes, defaultWorkflowEdges } from './utils/workflow.ts';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-export interface Stage {
-  title: string;
-  desc: string;
-  artifact: string;
-}
 
-const DEFAULT_STAGES: Stage[] = [
-  { title: 'Product Manager', desc: 'تحليل المتطلبات وتحديد MVP', artifact: 'PRD.md' },
-  { title: 'Business Analyst', desc: 'تحليل السوق والمنافسين', artifact: 'Market.md' },
-  { title: 'UX Researcher', desc: 'رسم رحلة المستخدم', artifact: 'UserFlow.md' },
-  { title: 'Product Designer', desc: 'تصميم واجهة المستخدم', artifact: 'Wireframes.fig' },
-  { title: 'Design System Eng', desc: 'بناء النظام البصري', artifact: 'Tokens.json' },
-  { title: 'System Architect', desc: 'هيكلة النظام الشاملة', artifact: 'Architecture.md' },
-  { title: 'Database Architect', desc: 'تصميم قواعد البيانات', artifact: 'Schema.sql' },
-  { title: 'API Architect', desc: 'تصميم الواجهات البرمجية', artifact: 'OpenAPI.yaml' },
-  { title: 'Security Engineer', desc: 'نموذج الحماية والأمان', artifact: 'Security.md' },
-  { title: 'UX Validation', desc: 'اعتماد تجربة المستخدم', artifact: 'UX_Audit.md' },
-  { title: 'AI Architect', desc: 'تكامل الذكاء الاصطناعي', artifact: 'AI_Config.json' },
-  { title: 'Frontend Lead', desc: 'واجهات المستخدم', artifact: 'Frontend/' },
-  { title: 'Backend Lead', desc: 'الخوادم والمنطق', artifact: 'Backend/' },
-  { title: 'Testing Architect', desc: 'ضمان الجودة والاختبار', artifact: 'Tests/' },
-  { title: 'DevOps Engineer', desc: 'الاستضافة والحاويات', artifact: 'Dockerfile' },
-  { title: 'Technical Writer', desc: 'كتابة التوثيق', artifact: 'Docs.md' },
-  { title: 'Legal & Privacy', desc: 'الامتثال للخصوصية', artifact: 'Privacy.md' },
-  { title: 'Release Manager', desc: 'خطة الإطلاق', artifact: 'Release.yml' },
-  { title: 'Principal Engineer', desc: 'التدقيق النهائي', artifact: 'FinalAudit.md' },
-  { title: 'AI Orchestrator', desc: 'تجميع البرومبت', artifact: 'Pipeline.yml' }
-];
 
-export type MainMode = 'orchestrator' | 'app_evaluator' | 'workflow_editor' | 'repository' | 'settings';
+export type MainMode = 'orchestrator' | 'app_evaluator' | 'workflow_editor' | 'repository' | 'settings' | 'live_preview';
 export type Tab = 'edit' | 'markdown' | 'app' | 'eval';
 
 export interface Project {
@@ -38,9 +13,9 @@ export interface Project {
   name: string;
   idea: string;
   status: 'مكتمل' | 'غير مكتمل';
-  currentStage: number;
-  stageArtifacts: Record<number, string>;
-  activityLogs: any[];
+  currentStage: string | null;
+  stageArtifacts: Record<string, string>;
+  activityLogs: Array<string | { text: string; errorDetails?: string }>;
   finalPrompt: string;
   mockupHtml: string;
   createdAt: number;
@@ -53,8 +28,8 @@ interface AppState {
   setIdea: (idea: string) => void;
   isProcessing: boolean;
   setIsProcessing: (isProcessing: boolean) => void;
-  currentStage: number;
-  setCurrentStage: (stage: number) => void;
+  currentStage: string | null;
+  setCurrentStage: (stage: string | null) => void;
   finalPrompt: string;
   setFinalPrompt: (promptOrFn: string | ((prev: string) => string)) => void;
   errorText: string;
@@ -90,21 +65,25 @@ interface AppState {
   setIsAppEvaluating: (isAppEvaluating: boolean) => void;
   appEvalError: string;
   setAppEvalError: (error: string) => void;
+  appEvalRetryMessage: string;
+  setAppEvalRetryMessage: (msg: string) => void;
 
   mainMode: MainMode;
   setMainMode: (mode: MainMode) => void;
 
-  workflowStages: Stage[];
-  setWorkflowStages: (stages: Stage[]) => void;
-  addStage: () => void;
-  updateStage: (index: number, field: keyof Stage, value: string) => void;
-  removeStage: (index: number) => void;
+  nodes: WorkflowNode[];
+  setNodes: (nodes: WorkflowNode[]) => void;
+  edges: WorkflowEdge[];
+  setEdges: (edges: WorkflowEdge[]) => void;
+  addNode: (node: WorkflowNode) => void;
+  updateNode: <K extends keyof WorkflowNode>(id: string, field: K, value: WorkflowNode[K]) => void;
+  removeNode: (id: string) => void;
 
-  activityLogs: any[];
-  setActivityLogs: (logsOrFn: any[] | ((prev: any[]) => any[])) => void;
+  activityLogs: Array<string | { text: string; errorDetails?: string }>;
+  setActivityLogs: (logsOrFn: Array<string | { text: string; errorDetails?: string }> | ((prev: Array<string | { text: string; errorDetails?: string }>) => Array<string | { text: string; errorDetails?: string }>)) => void;
   
   stageArtifacts: Record<number, string>;
-  setStageArtifacts: (artifactsOrFn: Record<number, string> | ((prev: Record<number, string>) => Record<number, string>)) => void;
+  setStageArtifacts: (artifactsOrFn: Record<string, string> | ((prev: Record<string, string>) => Record<string, string>)) => void;
   
   selectedArtifact: { title: string; content: string } | null;
   setSelectedArtifact: (artifact: { title: string; content: string } | null) => void;
@@ -122,6 +101,12 @@ interface AppState {
   markNotificationRead: (id: string) => void;
   clearNotifications: () => void;
   customApiKeys: string[];
+  isConnected: boolean;
+  setIsConnected: (connected: boolean) => void;
+  requestQueue: any[];
+  addToQueue: (req: any) => void;
+  removeFromQueue: (reqId: string) => void;
+  clearQueue: () => void;
   setCustomApiKeys: (keys: string[]) => void;
 }
 
@@ -130,13 +115,19 @@ export const useAppStore = create<AppState>()(
     (set) => ({
   customApiKeys: [],
   setCustomApiKeys: (customApiKeys) => set({ customApiKeys }),
+  isConnected: false,
+  setIsConnected: (isConnected) => set({ isConnected }),
+  requestQueue: [],
+  addToQueue: (req) => set((state) => ({ requestQueue: [...state.requestQueue, req] })),
+  removeFromQueue: (reqId) => set((state) => ({ requestQueue: state.requestQueue.filter((r: any) => r.id !== reqId) })),
+  clearQueue: () => set({ requestQueue: [] }),
   currentProjectId: null,
   setCurrentProjectId: (id) => set({ currentProjectId: id }),
-  idea: '',
+  idea: 'تطبيق ويب لإدارة المهام (Kanban Board) متقدم يشبه Trello. يحتوي على واجهة سحب وإفلات للبطاقات بين الأعمدة (To Do, In Progress, Done). يجب أن يكون التصميم عصرياً واحترافياً باستخدام Tailwind CSS، مع دعم للوضع الليلي، ورسوم بيانية بسيطة توضح إحصائيات المهام المنجزة.',
   setIdea: (idea) => set({ idea }),
   isProcessing: false,
   setIsProcessing: (isProcessing) => set({ isProcessing }),
-  currentStage: -1,
+  currentStage: null,
   setCurrentStage: (currentStage) => set({ currentStage }),
   finalPrompt: '',
   setFinalPrompt: (promptOrFn) => set((state) => ({ finalPrompt: typeof promptOrFn === 'function' ? promptOrFn(state.finalPrompt) : promptOrFn })),
@@ -173,26 +164,19 @@ export const useAppStore = create<AppState>()(
   setIsAppEvaluating: (isAppEvaluating) => set({ isAppEvaluating }),
   appEvalError: '',
   setAppEvalError: (appEvalError) => set({ appEvalError }),
+  appEvalRetryMessage: '',
+  setAppEvalRetryMessage: (appEvalRetryMessage) => set({ appEvalRetryMessage }),
 
   mainMode: 'orchestrator',
   setMainMode: (mainMode) => set({ mainMode }),
 
-  workflowStages: DEFAULT_STAGES,
-  setWorkflowStages: (workflowStages) => set({ workflowStages }),
-  addStage: () => set((state) => ({
-    workflowStages: [...state.workflowStages, { title: 'مرحلة جديدة (New Role)', desc: 'وصف المهمة المطلوبة', artifact: 'output.md' }]
-  })),
-  updateStage: (index, field, value) => set((state) => {
-    const newStages = [...state.workflowStages];
-    newStages[index] = { ...newStages[index], [field]: value };
-    return { workflowStages: newStages };
-  }),
-  removeStage: (index) => set((state) => {
-    if (state.workflowStages.length <= 1) return state;
-    const newStages = [...state.workflowStages];
-    newStages.splice(index, 1);
-    return { workflowStages: newStages };
-  }),
+  nodes: defaultWorkflowNodes,
+  edges: defaultWorkflowEdges,
+  setNodes: (nodes) => set({ nodes }),
+  setEdges: (edges) => set({ edges }),
+  addNode: (node) => set((state) => ({ nodes: [...state.nodes, node] })),
+  updateNode: (id: string, field: any, value: any) => set((state) => ({ nodes: state.nodes.map(n => n.id === id ? { ...n, [field]: value } : n) })),
+  removeNode: (id) => set((state) => ({ nodes: state.nodes.filter(n => n.id !== id), edges: state.edges.filter(e => e.source !== id && e.target !== id) })),
 
   activityLogs: [],
   setActivityLogs: (logsOrFn) => set((state) => ({ activityLogs: typeof logsOrFn === 'function' ? logsOrFn(state.activityLogs) : logsOrFn })),

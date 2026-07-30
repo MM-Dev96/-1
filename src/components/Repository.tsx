@@ -16,7 +16,7 @@ export default function Repository() {
     setIdea(newIdea);
     setFinalPrompt(project.finalPrompt || '');
     setMockupHtml(project.mockupHtml || '');
-    setCurrentStage(project.currentStage || 0);
+    setCurrentStage(project.currentStage ? String(project.currentStage) : null);
     setStageArtifacts(project.stageArtifacts || {});
     setActivityLogs(project.activityLogs || []);
     setCurrentProjectId(project.id);
@@ -29,7 +29,7 @@ export default function Repository() {
       <div className="flex flex-col h-full gap-6 animate-in fade-in duration-300">
         <div className="flex items-center justify-between bg-[#0f0f0f] border border-white/10 p-4 rounded-2xl shadow-xl">
           <div className="flex items-center gap-4">
-            <button
+            <button aria-label="button" 
               onClick={() => setSelectedProject(null)}
               className="p-2 bg-white/5 hover:bg-white/10 rounded-lg transition-colors border border-white/5 text-zinc-400 hover:text-white"
             >
@@ -46,7 +46,7 @@ export default function Repository() {
             </div>
           </div>
           <div className="flex gap-2">
-            <button
+            <button aria-label="button" 
               onClick={() => {
                 if (selectedProject.status === 'مكتمل') {
                   const problem = window.prompt('اذكر المشكلة أو التعديل المطلوب:');
@@ -61,7 +61,7 @@ export default function Repository() {
             >
               {selectedProject.status === 'مكتمل' ? <><Edit3 size={16} /> تعديل المشروع</> : <><Play size={16} /> استكمال المشروع</>}
             </button>
-            <button
+            <button aria-label="button" 
               onClick={() => {
                 if (window.confirm('هل أنت متأكد من حذف هذا المشروع؟')) {
                   removeProject(selectedProject.id);
@@ -78,19 +78,19 @@ export default function Repository() {
         <div className="flex-1 bg-[#050505] relative rounded-2xl overflow-hidden shadow-2xl border border-white/10 flex flex-col">
           <div className="bg-[#0f0f0f] p-2 border-b border-white/10 flex items-center gap-2">
             <div className="flex bg-black/50 p-1 rounded-lg border border-white/5">
-              <button
+              <button aria-label="button" 
                 onClick={() => setRepoTab('preview')}
                 className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm transition-all font-medium ${repoTab === 'preview' ? 'bg-white/10 text-white shadow-sm' : 'text-zinc-400 hover:text-zinc-200'}`}
               >
                 <Eye size={14} /> معاينة حية
               </button>
-              <button
+              <button aria-label="button" 
                 onClick={() => setRepoTab('code')}
                 className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm transition-all font-medium ${repoTab === 'code' ? 'bg-white/10 text-white shadow-sm' : 'text-zinc-400 hover:text-zinc-200'}`}
               >
                 <Code2 size={14} /> الكود المصدري
               </button>
-              <button
+              <button aria-label="button" 
                 onClick={() => setRepoTab('artifacts')}
                 className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm transition-all font-medium ${repoTab === 'artifacts' ? 'bg-white/10 text-white shadow-sm' : 'text-zinc-400 hover:text-zinc-200'}`}
               >
@@ -134,7 +134,7 @@ export default function Repository() {
                   {Object.entries(selectedProject.stageArtifacts || {}).map(([indexStr, content]) => {
                     const idx = parseInt(indexStr);
                     return (
-                      <button
+                      <button aria-label="button" 
                         key={idx}
                         onClick={() => setSelectedArtifactIndex(idx)}
                         className={`text-right p-3 rounded-lg text-sm transition-all ${
@@ -187,7 +187,7 @@ export default function Repository() {
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/20 flex items-center justify-center">
                   <LayoutTemplate size={20} className="text-indigo-400" />
                 </div>
-                <button
+                <button aria-label="button" 
                   onClick={() => {
                     if (window.confirm('هل أنت متأكد من حذف هذا المشروع؟')) {
                       removeProject(project.id);
@@ -214,13 +214,13 @@ export default function Repository() {
               </div>
 
               <div className="mt-auto pt-2 flex gap-2">
-                <button
+                <button aria-label="button" 
                   onClick={() => setSelectedProject(project)}
                   className="flex-1 bg-white/5 hover:bg-white/10 text-white py-2 rounded-lg text-sm font-medium transition-colors border border-white/5 flex items-center justify-center gap-2"
                 >
                   <Eye size={16} /> معاينة
                 </button>
-                <button
+                <button aria-label="button" 
                   onClick={() => {
                     if (project.status === 'مكتمل') {
                       const problem = window.prompt('اذكر المشكلة أو التعديل المطلوب:');

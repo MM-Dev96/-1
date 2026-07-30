@@ -14,6 +14,14 @@ export const projects = pgTable('projects', {
   userId: integer('user_id').references(() => users.id).notNull(),
   name: text('name').notNull(),
   description: text('description'),
+  workflowStages: jsonb('workflow_stages'),
+  stageArtifacts: jsonb('stage_artifacts'),
+  activityLogs: jsonb('activity_logs'),
+  idea: text('idea'),
+  finalPrompt: text('final_prompt'),
+  mockupHtml: text('mockup_html'),
+  status: text('status').default('PENDING'),
+  currentStage: integer('current_stage').default(0),
   createdAt: timestamp('created_at').defaultNow(),
 });
 

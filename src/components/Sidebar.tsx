@@ -1,6 +1,7 @@
 import React from 'react';
-import { Play, LayoutTemplate, Shield, Archive, Settings, User, ChevronDown, Zap, X } from 'lucide-react';
+import { Play, LayoutTemplate, Shield, Archive, Settings, User, ChevronDown, Zap, X, MonitorPlay } from 'lucide-react';
 import { useAppStore, MainMode } from '../store';
+import { motion } from 'motion/react';
 
 interface SidebarProps {
   sidebarOpen: boolean;
@@ -15,11 +16,12 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen }: SidebarProps) {
     setSidebarOpen(false);
   };
 
-  const navItems = [
+  const navItems = React.useMemo(() => [
     { mode: 'orchestrator' as MainMode, icon: Play, label: 'منسق المهام' },
     { mode: 'workflow_editor' as MainMode, icon: LayoutTemplate, label: 'محرر مسار العمل' },
     { mode: 'app_evaluator' as MainMode, icon: Shield, label: 'مدقق النظام' },
-  ];
+    { mode: 'live_preview' as MainMode, icon: MonitorPlay, label: 'المعاينة الحية' },
+  ], []);
 
   return (
     <>
@@ -30,7 +32,7 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen }: SidebarProps) {
           onClick={() => setSidebarOpen(false)}
         />
       )}
-      <aside className={`fixed md:static inset-y-0 right-0 z-50 w-64 bg-[#0a0a0a] border-l border-white/5 flex flex-col transition-transform duration-300 ease-in-out ${sidebarOpen ? "translate-x-0" : "translate-x-full md:translate-x-0"}`}>
+      <aside className={`fixed md:static inset-y-0 right-0 z-50 w-64 bg-[#0a0a0a]/90 backdrop-blur-xl border-l border-white/5 flex flex-col transition-transform duration-300 ease-in-out ${sidebarOpen ? "translate-x-0" : "translate-x-full md:translate-x-0"}`}>
         <div className="p-6 flex items-center justify-between border-b border-white/5">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
@@ -40,39 +42,48 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen }: SidebarProps) {
               Nexus<span className="text-zinc-500 font-light">SaaS</span>
             </span>
           </div>
-          <button className="md:hidden text-zinc-400 hover:text-white" onClick={() => setSidebarOpen(false)}>
+          <button aria-label="button"  className="md:hidden text-zinc-400 hover:text-white" onClick={() => setSidebarOpen(false)}>
             <X size={20} />
           </button>
         </div>
-
         <div className="flex-1 py-6 px-4 flex flex-col gap-2 overflow-y-auto custom-scrollbar">
           <div className="text-xs font-semibold text-zinc-500 tracking-wider mb-2 px-3">الوحدات الأساسية</div>
           
-          {navItems.map(item => (
-            <button
+          {navItems.map((item, i) => (
+            <motion.button
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.3, delay: i * 0.05 }}
+              whileHover={{ scale: 1.02, x: -4 }}
+              whileTap={{ scale: 0.98 }}
               key={item.mode}
               onClick={() => handleNav(item.mode)}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${mainMode === item.mode ? "bg-indigo-500/10 text-indigo-400" : "text-zinc-400 hover:text-zinc-200 hover:bg-white/5"}`}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors duration-200 ${mainMode === item.mode ? "bg-indigo-500/10 text-indigo-400 shadow-inner" : "text-zinc-400 hover:text-zinc-200 hover:bg-white/5"}`}
             >
               <item.icon size={16} /> {item.label}
-            </button>
+            </motion.button>
           ))}
-
-          <button
+          <motion.button
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.3, delay: navItems.length * 0.05 }}
+            whileHover={{ scale: 1.02, x: -4 }}
+            whileTap={{ scale: 0.98 }}
             onClick={() => handleNav('repository')}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 mt-4 border-t border-white/5 pt-4 ${mainMode === "repository" ? "bg-emerald-500/10 text-emerald-400" : "text-zinc-400 hover:text-zinc-200 hover:bg-white/5"}`}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors duration-200 mt-4 border-t border-white/5 pt-4 ${mainMode === "repository" ? "bg-emerald-500/10 text-emerald-400 shadow-inner" : "text-zinc-400 hover:text-zinc-200 hover:bg-white/5"}`}
           >
             <Archive size={16} /> المستودع
-          </button>
+          </motion.button>
         </div>
-
         <div className="p-4 border-t border-white/5">
-          <button 
+          <motion.button 
+            whileHover={{ scale: 1.02, x: -4 }}
+            whileTap={{ scale: 0.98 }}
             onClick={() => handleNav('settings')}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${mainMode === 'settings' ? 'bg-indigo-500/10 text-indigo-400' : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'}`}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${mainMode === 'settings' ? 'bg-indigo-500/10 text-indigo-400 shadow-inner' : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'}`}
           >
             <Settings size={16} /> الإعدادات
-          </button>
+          </motion.button>
           <div className="mt-4 flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-white/5 rounded-lg transition-colors">
             <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center border border-zinc-700">
               <User size={14} className="text-zinc-400" />
